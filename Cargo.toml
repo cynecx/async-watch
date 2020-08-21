@@ -1,0 +1,16 @@
+[package]
+name = "async-watch"
+version = "0.1.0"
+authors = ["cynecx <me@cynecx.net>", "Carl Lerche <me@carllerche.com>"]
+edition = "2018"
+description = "Async watch channel"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+
+[dependencies]
+atomic-waker = "1.0.0"
+fnv = "1.0.6"
+
+[dev-dependencies]
+async-executor = "0.1.2"
+tokio-test = "0.2.1"
