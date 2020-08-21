@@ -2,7 +2,7 @@
 
 A single-producer, multi-consumer channel that only retains the *last* sent value.
 
-Extracted from [Tokio's](https://github.com/tokio-rs/tokio/) `tokio::sync::watch` implementation,
+Extracted from [Tokio's](https://github.com/tokio-rs/tokio/) [`tokio::sync::watch`](https://github.com/tokio-rs/tokio/blob/master/tokio/src/sync/watch.rs) implementation,
 which was initially written by [Carl Lerche](https://github.com/carllerche).
 
 ## License
