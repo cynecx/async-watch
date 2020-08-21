@@ -22,7 +22,7 @@
 //! ```
 //! # let executor = async_executor::LocalExecutor::new();
 //! # executor.run(async {
-//! let (tx, mut rx) = async_watch::channel("hello");
+//! let (tx, mut rx) = async_watch2::channel("hello");
 //!
 //! executor.spawn(async move {
 //!     while let Some(value) = rx.recv().await {
@@ -148,7 +148,7 @@ struct WatchInner {
 /// ```
 /// # let executor = async_executor::LocalExecutor::new();
 /// # executor.run(async {
-/// let (tx, mut rx) = async_watch::channel("hello");
+/// let (tx, mut rx) = async_watch2::channel("hello");
 ///
 /// executor.spawn(async move {
 ///     while let Some(value) = rx.recv().await {
@@ -196,7 +196,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// let (_, rx) = async_watch::channel("hello");
+    /// let (_, rx) = async_watch2::channel("hello");
     /// assert_eq!(*rx.borrow(), "hello");
     /// ```
     pub fn borrow(&self) -> Ref<'_, T> {
@@ -243,7 +243,7 @@ impl<T: Clone> Receiver<T> {
     /// ```
     /// # let executor = async_executor::LocalExecutor::new();
     /// # executor.run(async {
-    /// let (tx, mut rx) = async_watch::channel("hello");
+    /// let (tx, mut rx) = async_watch2::channel("hello");
     ///
     /// let v = rx.recv().await.unwrap();
     /// assert_eq!(v, "hello");

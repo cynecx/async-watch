@@ -1,4 +1,4 @@
-use async_watch::channel;
+use async_watch2::channel;
 use tokio_test::task::spawn;
 use tokio_test::{assert_pending, assert_ready};
 

@@ -1,4 +1,4 @@
-# async-watch
+# async-watch2
 
 A single-producer, multi-consumer channel that only retains the *last* sent value.
 
@@ -7,7 +7,7 @@ which was initially written by [Carl Lerche](https://github.com/carllerche).
 
 ## License
 
-async-watch is primarily distributed under the terms of both the MIT license
+async-watch2 is primarily distributed under the terms of both the MIT license
 and the Apache License (Version 2.0).
 
 See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for details.
