@@ -4,8 +4,13 @@ version = "0.1.0"
 authors = ["cynecx <me@cynecx.net>", "Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 description = "Async watch channel"
-license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/async-watch2"
 readme = "README.md"
+homepage = "https://github.com/cynecx/async-watch"
+repository = "https://github.com/cynecx/async-watch"
+license = "Apache-2.0 OR MIT"
+keywords = ["async", "asynchronous", "channel", "synchronization"]
+categories = ["asynchronous", "concurrency"]
 
 [dependencies]
 atomic-waker = "1.0.0"
