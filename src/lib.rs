@@ -2,7 +2,7 @@
 //! value.
 //!
 //! Extracted from [Tokio's](https://github.com/tokio-rs/tokio/) `tokio::sync::watch`
-//! implementation, which was initially written by [Carl Lerche](https://github.com/carllerche).
+//! implementation, which was written by [Carl Lerche](https://github.com/carllerche).
 //!
 //! This channel is useful for watching for changes to a value from multiple
 //! points in the code base, for example, changes to configuration values.
@@ -11,11 +11,12 @@
 //!
 //! [`channel`] returns a [`Sender`] / [`Receiver`] pair. These are
 //! the producer and sender halves of the channel. The channel is
-//! created with an initial value. [`Receiver::recv`] will always
-//! be ready upon creation and will yield either this initial value or
-//! the latest value that has been sent by `Sender`.
+//! created with an initial value. The **latest** value stored in the channel is accessed with
+//! [`Receiver::borrow()`]. Awaiting [`Receiver::changed()`] waits for a new
+//! value to sent by the [`Sender`] half. Awaiting [`Receiver::recv()`] combines
+//! [`Receiver::changed()`] and [`Receiver::borrow()`] where the borrowed value
+//! is cloned and returned.
 //!
-//! Calls to [`Receiver::recv`] will always yield the latest value.
 //!
 //! # Examples
 //!
@@ -23,14 +24,23 @@
 //! # let executor = async_executor::LocalExecutor::new();
 //! # executor.run(async {
 //! let (tx, mut rx) = async_watch2::channel("hello");
+//! let mut rx2 = rx.clone();
 //!
+//! // First variant
 //! executor.spawn(async move {
-//!     while let Some(value) = rx.recv().await {
+//!     while let Ok(value) = rx.recv().await {
 //!         println!("received = {:?}", value);
 //!     }
 //! });
 //!
-//! tx.broadcast("world").unwrap();
+//! // Second variant
+//! executor.spawn(async move {
+//!     while rx2.changed().await.is_ok() {
+//!         println!("received = {:?}", *rx2.borrow());
+//!     }
+//! });
+//!
+//! tx.send("world").unwrap();
 //! # });
 //! ```
 //!
@@ -54,18 +64,12 @@
 
 pub mod error;
 
-mod poll_fn;
-use poll_fn::poll_fn;
-
-use atomic_waker::AtomicWaker;
-use fnv::FnvHashSet;
+use event_listener::Event;
 
 use std::ops;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, Weak};
-use std::task::Poll::{Pending, Ready};
-use std::task::{Context, Poll};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 /// The initial version starts at zero.
 const VERSION_0: usize = 0b00;
@@ -84,8 +88,8 @@ pub struct Receiver<T> {
     /// Pointer to the shared state
     shared: Arc<Shared<T>>,
 
-    /// Pointer to the watcher's internal state
-    inner: Watcher,
+    /// Last observed version.
+    version: usize,
 }
 
 /// Sends values to the associated [`Receiver`](struct@Receiver).
@@ -93,7 +97,7 @@ pub struct Receiver<T> {
 /// Instances are created by the [`channel`](fn@channel) function.
 #[derive(Debug)]
 pub struct Sender<T> {
-    shared: Weak<Shared<T>>,
+    shared: Arc<Shared<T>>,
 }
 
 /// Returns a reference to the inner value
@@ -117,24 +121,14 @@ struct Shared<T> {
     /// represent the current version.
     version: AtomicUsize,
 
-    /// All watchers
-    watchers: Mutex<Watchers>,
+    /// Tracks the number of `Receiver` instances
+    ref_count_rx: AtomicUsize,
 
-    /// Task to notify when all watchers drop
-    cancel: AtomicWaker,
-}
+    /// Event when the value has changed or the `Sender` has been dropped.
+    event_value_changed: Event,
 
-type Watchers = FnvHashSet<Watcher>;
-
-/// The watcher's ID is based on the Arc's pointer.
-#[derive(Clone, Debug)]
-struct Watcher(Arc<WatchInner>);
-
-#[derive(Debug)]
-struct WatchInner {
-    /// Last observed version
-    version: AtomicUsize,
-    waker: AtomicWaker,
+    /// Event when all `Receiver`s have been dropped.
+    event_all_recv_dropped: Event,
 }
 
 /// Creates a new watch channel, returning the "send" and "receive" handles.
@@ -151,37 +145,34 @@ struct WatchInner {
 /// let (tx, mut rx) = async_watch2::channel("hello");
 ///
 /// executor.spawn(async move {
-///     while let Some(value) = rx.recv().await {
+///     while let Ok(value) = rx.recv().await {
 ///         println!("received = {:?}", value);
 ///     }
 /// });
 ///
-/// tx.broadcast("world").unwrap();
+/// tx.send("world").unwrap();
 /// # });
 /// ```
 ///
 /// [`Sender`]: struct@Sender
 /// [`Receiver`]: struct@Receiver
 pub fn channel<T: Clone>(init: T) -> (Sender<T>, Receiver<T>) {
-    // We don't start knowing VERSION_1
-    let inner = Watcher::new_version(VERSION_0);
-
-    // Insert the watcher
-    let mut watchers = Watchers::with_capacity_and_hasher(0, Default::default());
-    watchers.insert(inner.clone());
-
     let shared = Arc::new(Shared {
         value: RwLock::new(init),
-        version: AtomicUsize::new(VERSION_1),
-        watchers: Mutex::new(watchers),
-        cancel: AtomicWaker::new(),
+        version: AtomicUsize::new(VERSION_0),
+        ref_count_rx: AtomicUsize::new(1),
+        event_value_changed: Event::new(),
+        event_all_recv_dropped: Event::new(),
     });
 
     let tx = Sender {
-        shared: Arc::downgrade(&shared),
+        shared: shared.clone(),
     };
 
-    let rx = Receiver { shared, inner };
+    let rx = Receiver {
+        shared,
+        version: VERSION_0,
+    };
 
     (tx, rx)
 }
@@ -204,27 +195,71 @@ impl<T> Receiver<T> {
         Ref { inner }
     }
 
-    // TODO: document
-    #[doc(hidden)]
-    pub fn poll_recv_ref<'a>(&'a mut self, cx: &mut Context<'_>) -> Poll<Option<Ref<'a, T>>> {
-        // Make sure the task is up to date
-        self.inner.waker.register(cx.waker());
+    /// Wait for a change notification
+    ///
+    /// Returns when a new value has been sent by the [`Sender`] since the last
+    /// time `changed()` was called. When the `Sender` half is dropped, `Err` is
+    /// returned.
+    ///
+    /// [`Sender`]: struct@Sender
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let executor = async_executor::LocalExecutor::new();
+    /// # executor.run(async {
+    /// let (tx, mut rx) = async_watch2::channel("hello");
+    ///
+    /// executor.spawn(async move {
+    ///     tx.send("goodbye").unwrap();
+    /// }).await;
+    ///
+    /// assert!(rx.changed().await.is_ok());
+    /// assert_eq!(*rx.borrow(), "goodbye");
+    ///
+    /// // The `tx` handle has been dropped
+    /// assert!(rx.changed().await.is_err());
+    /// });
+    /// ```
+    pub async fn changed(&mut self) -> Result<(), error::RecvError> {
+        // Fast path: Check the state first.
+        if let Some(ret) = self.maybe_changed() {
+            return ret;
+        }
 
+        // In order to avoid a race condition, we first request a notification,
+        // **then** check the current value's version. If a new version exists,
+        // the notification request is dropped.
+        let listener = self.shared.event_value_changed.listen();
+
+        if let Some(ret) = self.maybe_changed() {
+            return ret;
+        }
+
+        listener.await;
+
+        self.maybe_changed()
+            .expect("[bug] failed to observe change after notificaton.")
+    }
+
+    fn maybe_changed(&mut self) -> Option<Result<(), error::RecvError>> {
+        // Load the version from the state
         let state = self.shared.version.load(SeqCst);
-        let version = state & !CLOSED;
+        let new_version = state & !CLOSED;
 
-        if self.inner.version.swap(version, Relaxed) != version {
-            let inner = self.shared.value.read().unwrap();
-
-            return Ready(Some(Ref { inner }));
+        if self.version != new_version {
+            // Observe the new version and return
+            self.version = new_version;
+            return Some(Ok(()));
         }
 
         if CLOSED == state & CLOSED {
-            // The `Store` handle has been dropped.
-            return Ready(None);
+            // All receivers have dropped.
+            return Some(Err(error::RecvError {}));
         }
 
-        Pending
+        // No changes.
+        None
     }
 }
 
@@ -245,73 +280,63 @@ impl<T: Clone> Receiver<T> {
     /// # executor.run(async {
     /// let (tx, mut rx) = async_watch2::channel("hello");
     ///
-    /// let v = rx.recv().await.unwrap();
-    /// assert_eq!(v, "hello");
-    ///
     /// let task = executor.spawn(async move {
-    ///     tx.broadcast("goodbye").unwrap();
+    ///     tx.send("goodbye").unwrap();
     /// });
+    ///
+    /// assert_eq!(*rx.borrow(), "hello");
     ///
     /// // Waits for the new task to spawn and send the value.
     /// let v = rx.recv().await.unwrap();
     /// assert_eq!(v, "goodbye");
     ///
     /// let v = rx.recv().await;
-    /// assert!(v.is_none());
+    /// assert!(v.is_err());
     ///
     /// task.await;
     /// # });
     /// ```
-    pub async fn recv(&mut self) -> Option<T> {
-        poll_fn(|cx| {
-            let v_ref = match self.poll_recv_ref(cx) {
-                Ready(v) => v,
-                Pending => return Pending,
-            };
-            Poll::Ready(v_ref.map(|v_ref| (*v_ref).clone()))
-        })
-        .await
+    pub async fn recv(&mut self) -> Result<T, error::RecvError> {
+        self.changed().await?;
+        Ok(self.borrow().clone())
     }
 }
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        let ver = self.inner.version.load(Relaxed);
-        let inner = Watcher::new_version(ver);
-        let shared = self.shared.clone();
-
-        shared.watchers.lock().unwrap().insert(inner.clone());
-
-        Receiver { shared, inner }
+        self.shared.ref_count_rx.fetch_add(1, Relaxed);
+        Receiver {
+            shared: self.shared.clone(),
+            version: self.version,
+        }
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        self.shared.watchers.lock().unwrap().remove(&self.inner);
+        if self.shared.ref_count_rx.fetch_sub(1, Relaxed) == 1 {
+            // Notify the single sender.
+            self.shared.event_all_recv_dropped.notify(usize::MAX);
+        }
     }
 }
 
 impl<T> Sender<T> {
-    /// Broadcasts a new value via the channel, notifying all receivers.
-    pub fn broadcast(&self, value: T) -> Result<(), error::SendError<T>> {
-        let shared = match self.shared.upgrade() {
-            Some(shared) => shared,
-            // All `Watch` handles have been canceled
-            None => return Err(error::SendError { inner: value }),
-        };
-
-        // Replace the value
-        {
-            let mut lock = shared.value.write().unwrap();
-            *lock = value;
+    /// Sends a new value via the channel, notifying all receivers.
+    pub fn send(&self, value: T) -> Result<(), error::SendError<T>> {
+        if self.shared.ref_count_rx.load(Relaxed) == 0 {
+            // All watchers (`Receiver`s) have been dropped.
+            return Err(error::SendError { inner: value });
         }
 
-        // Update the version. 2 (`VERSION_1`) is used so that the CLOSED bit is not set.
-        shared.version.fetch_add(VERSION_1, SeqCst);
+        // Replace the value.
+        *self.shared.value.write().unwrap() = value;
 
-        // Notify all watchers
-        notify_all(&*shared);
+        // Update the version. 2 (`VERSION_1`) is used so that the CLOSED bit is not set.
+        self.shared.version.fetch_add(VERSION_1, SeqCst);
+
+        // Notify all watchers.
+        self.shared.event_value_changed.notify(usize::MAX);
 
         Ok(())
     }
@@ -320,37 +345,28 @@ impl<T> Sender<T> {
     ///
     /// This allows the producer to get notified when interest in the produced
     /// values is canceled and immediately stop doing work.
-    pub async fn closed(&mut self) {
-        poll_fn(|cx| self.poll_close(cx)).await
-    }
-
-    fn poll_close(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        match self.shared.upgrade() {
-            Some(shared) => {
-                shared.cancel.register(cx.waker());
-                Pending
-            }
-            None => Ready(()),
+    pub async fn closed(&self) {
+        // Fast path.
+        if self.shared.ref_count_rx.load(Relaxed) == 0 {
+            return;
         }
-    }
-}
 
-/// Notifies all watchers of a change
-fn notify_all<T>(shared: &Shared<T>) {
-    let watchers = shared.watchers.lock().unwrap();
+        // Listen for events now and check the reference count afterwards to avoid race condition.
+        let listener = self.shared.event_all_recv_dropped.listen();
 
-    for watcher in watchers.iter() {
-        // Notify the task
-        watcher.waker.wake();
+        if self.shared.ref_count_rx.load(Relaxed) == 0 {
+            return;
+        }
+
+        listener.await;
+        debug_assert_eq!(self.shared.ref_count_rx.load(Relaxed), 0);
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        if let Some(shared) = self.shared.upgrade() {
-            shared.version.fetch_or(CLOSED, SeqCst);
-            notify_all(&*shared);
-        }
+        self.shared.version.fetch_or(CLOSED, SeqCst);
+        self.shared.event_value_changed.notify(usize::MAX);
     }
 }
 
@@ -361,46 +377,5 @@ impl<T> ops::Deref for Ref<'_, T> {
 
     fn deref(&self) -> &T {
         self.inner.deref()
-    }
-}
-
-// ===== impl Shared =====
-
-impl<T> Drop for Shared<T> {
-    fn drop(&mut self) {
-        self.cancel.wake();
-    }
-}
-
-// ===== impl Watcher =====
-
-impl Watcher {
-    fn new_version(version: usize) -> Self {
-        Watcher(Arc::new(WatchInner {
-            version: AtomicUsize::new(version),
-            waker: AtomicWaker::new(),
-        }))
-    }
-}
-
-impl std::cmp::PartialEq for Watcher {
-    fn eq(&self, other: &Watcher) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl std::cmp::Eq for Watcher {}
-
-impl std::hash::Hash for Watcher {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (&*self.0 as *const WatchInner).hash(state)
-    }
-}
-
-impl std::ops::Deref for Watcher {
-    type Target = WatchInner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
