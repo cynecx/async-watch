@@ -1,4 +1,6 @@
 use async_watch2::channel;
+use std::cell::Cell;
+use std::rc::Rc;
 use tokio_test::task::spawn;
 use tokio_test::{assert_pending, assert_ready, assert_ready_err, assert_ready_ok};
 
@@ -175,4 +177,109 @@ fn poll_close() {
     }
 
     assert!(tx.send("two").is_err());
+}
+
+// Copied from tokio/tests/async_send_sync.rs
+
+fn is_send_sync<T: Send + Sync>() {}
+fn is_clone<T: Clone>() {}
+
+#[allow(dead_code)]
+fn require_send<T: Send>(_t: &T) {}
+#[allow(dead_code)]
+fn require_sync<T: Sync>(_t: &T) {}
+
+#[allow(dead_code)]
+struct Invalid;
+
+trait AmbiguousIfSend<A> {
+    fn some_item(&self) {}
+}
+impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+impl<T: ?Sized + Send> AmbiguousIfSend<Invalid> for T {}
+
+trait AmbiguousIfSync<A> {
+    fn some_item(&self) {}
+}
+impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+impl<T: ?Sized + Sync> AmbiguousIfSync<Invalid> for T {}
+
+macro_rules! into_todo {
+    ($typ:ty) => {{
+        let x: $typ = todo!();
+        x
+    }};
+}
+
+macro_rules! async_assert_fn {
+    ($($f:ident $(< $($generic:ty),* > )? )::+($($arg:ty),*): Send & Sync) => {
+        #[allow(unreachable_code)]
+        #[allow(unused_variables)]
+        const _: fn() = || {
+            let f = $($f $(::<$($generic),*>)? )::+( $( into_todo!($arg) ),* );
+            require_send(&f);
+            require_sync(&f);
+        };
+    };
+    ($($f:ident $(< $($generic:ty),* > )? )::+($($arg:ty),*): Send & !Sync) => {
+        #[allow(unreachable_code)]
+        #[allow(unused_variables)]
+        const _: fn() = || {
+            let f = $($f $(::<$($generic),*>)? )::+( $( into_todo!($arg) ),* );
+            require_send(&f);
+            AmbiguousIfSync::some_item(&f);
+        };
+    };
+    ($($f:ident $(< $($generic:ty),* > )? )::+($($arg:ty),*): !Send & Sync) => {
+        #[allow(unreachable_code)]
+        #[allow(unused_variables)]
+        const _: fn() = || {
+            let f = $($f $(::<$($generic),*>)? )::+( $( into_todo!($arg) ),* );
+            AmbiguousIfSend::some_item(&f);
+            require_sync(&f);
+        };
+    };
+    ($($f:ident $(< $($generic:ty),* > )? )::+($($arg:ty),*): !Send & !Sync) => {
+        #[allow(unreachable_code)]
+        #[allow(unused_variables)]
+        const _: fn() = || {
+            let f = $($f $(::<$($generic),*>)? )::+( $( into_todo!($arg) ),* );
+            AmbiguousIfSend::some_item(&f);
+            AmbiguousIfSync::some_item(&f);
+        };
+    };
+}
+
+macro_rules! assert_not_impl {
+    ($x:ty, $($t:path),+ $(,)*) => {
+        const _: fn() -> () = || {
+            struct Check<T: ?Sized>(T);
+            trait AmbiguousIfImpl<A> { fn some_item() { } }
+
+            impl<T: ?Sized> AmbiguousIfImpl<()> for Check<T> { }
+            impl<T: ?Sized $(+ $t)*> AmbiguousIfImpl<u8> for Check<T> { }
+
+            <Check::<$x> as AmbiguousIfImpl<_>>::some_item()
+        };
+    };
+}
+
+macro_rules! send_and_sync_impl {
+    ($t:ty) => {
+        is_send_sync::<async_watch2::Sender<$t>>();
+        assert_not_impl!(async_watch2::Sender<$t>, Clone);
+
+        is_send_sync::<async_watch2::Receiver<$t>>();
+        is_clone::<async_watch2::Receiver<$t>>();
+    };
+}
+
+async_assert_fn!(async_watch2::Sender<u8>::closed(_): Send & Sync);
+async_assert_fn!(async_watch2::Sender<Cell<u8>>::closed(_): !Send & !Sync);
+async_assert_fn!(async_watch2::Sender<Rc<u8>>::closed(_): !Send & !Sync);
+
+#[test]
+fn send_and_sync_clone() {
+    send_and_sync_impl!(usize);
+    send_and_sync_impl!(Box<usize>);
 }

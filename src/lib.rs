@@ -100,7 +100,7 @@ pub struct Sender<T> {
     shared: Arc<Shared<T>>,
 }
 
-/// Returns a reference to the inner value
+/// Returns a reference to the inner value.
 ///
 /// Outstanding borrows hold a read lock on the inner value. This means that
 /// long lived borrows could cause the produce half to block. It is recommended
@@ -121,7 +121,7 @@ struct Shared<T> {
     /// represent the current version.
     version: AtomicUsize,
 
-    /// Tracks the number of `Receiver` instances
+    /// Tracks the number of `Receiver` instances.
     ref_count_rx: AtomicUsize,
 
     /// Event when the value has changed or the `Sender` has been dropped.
@@ -178,7 +178,7 @@ pub fn channel<T: Clone>(init: T) -> (Sender<T>, Receiver<T>) {
 }
 
 impl<T> Receiver<T> {
-    /// Returns a reference to the most recently sent value
+    /// Returns a reference to the most recently sent value.
     ///
     /// Outstanding borrows hold a read lock. This means that long lived borrows
     /// could cause the send half to block. It is recommended to keep the borrow
@@ -195,7 +195,7 @@ impl<T> Receiver<T> {
         Ref { inner }
     }
 
-    /// Wait for a change notification
+    /// Wait for a change notification.
     ///
     /// Returns when a new value has been sent by the [`Sender`] since the last
     /// time `changed()` was called. When the `Sender` half is dropped, `Err` is
@@ -210,15 +210,17 @@ impl<T> Receiver<T> {
     /// # executor.run(async {
     /// let (tx, mut rx) = async_watch2::channel("hello");
     ///
-    /// executor.spawn(async move {
+    /// let task = executor.spawn(async move {
     ///     tx.send("goodbye").unwrap();
-    /// }).await;
+    /// });
     ///
     /// assert!(rx.changed().await.is_ok());
     /// assert_eq!(*rx.borrow(), "goodbye");
     ///
     /// // The `tx` handle has been dropped
     /// assert!(rx.changed().await.is_err());
+    ///
+    /// task.await;
     /// });
     /// ```
     pub async fn changed(&mut self) -> Result<(), error::RecvError> {
@@ -264,12 +266,11 @@ impl<T> Receiver<T> {
 }
 
 impl<T: Clone> Receiver<T> {
-    /// Attempts to clone the latest value sent via the channel.
+    /// A convenience helper which combines calling [`Receiver::changed()`] and
+    /// [`Receiver::borrow()`] where the borrowed value is cloned and returned.
     ///
-    /// If this is the first time the function is called on a `Receiver`
-    /// instance, then the function completes immediately with the **current**
-    /// value held by the channel. On the next call, the function waits until
-    /// a new value is sent in the channel.
+    /// Note: If this is the first time the function is called on a `Receiver`
+    /// instance, then the function **will wait** until a new value is sent into the channel.
     ///
     /// `None` is returned if the `Sender` half is dropped.
     ///

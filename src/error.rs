@@ -1,3 +1,5 @@
+//! Watch error types.
+
 use std::fmt;
 
 /// Error produced when sending a value fails.
