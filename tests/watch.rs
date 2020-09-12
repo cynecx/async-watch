@@ -1,4 +1,4 @@
-use async_watch2::channel;
+use async_watch::channel;
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio_test::task::spawn;
@@ -266,17 +266,17 @@ macro_rules! assert_not_impl {
 
 macro_rules! send_and_sync_impl {
     ($t:ty) => {
-        is_send_sync::<async_watch2::Sender<$t>>();
-        assert_not_impl!(async_watch2::Sender<$t>, Clone);
+        is_send_sync::<async_watch::Sender<$t>>();
+        assert_not_impl!(async_watch::Sender<$t>, Clone);
 
-        is_send_sync::<async_watch2::Receiver<$t>>();
-        is_clone::<async_watch2::Receiver<$t>>();
+        is_send_sync::<async_watch::Receiver<$t>>();
+        is_clone::<async_watch::Receiver<$t>>();
     };
 }
 
-async_assert_fn!(async_watch2::Sender<u8>::closed(_): Send & Sync);
-async_assert_fn!(async_watch2::Sender<Cell<u8>>::closed(_): !Send & !Sync);
-async_assert_fn!(async_watch2::Sender<Rc<u8>>::closed(_): !Send & !Sync);
+async_assert_fn!(async_watch::Sender<u8>::closed(_): Send & Sync);
+async_assert_fn!(async_watch::Sender<Cell<u8>>::closed(_): !Send & !Sync);
+async_assert_fn!(async_watch::Sender<Rc<u8>>::closed(_): !Send & !Sync);
 
 #[test]
 fn send_and_sync_clone() {

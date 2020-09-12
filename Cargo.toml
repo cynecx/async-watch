@@ -1,10 +1,10 @@
 [package]
-name = "async-watch2"
+name = "async-watch"
 version = "0.2.0"
 authors = ["cynecx <me@cynecx.net>", "Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 description = "Async watch channel"
-documentation = "https://docs.rs/async-watch2"
+documentation = "https://docs.rs/async-watch"
 readme = "README.md"
 homepage = "https://github.com/cynecx/async-watch"
 repository = "https://github.com/cynecx/async-watch"
