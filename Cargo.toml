@@ -1,6 +1,6 @@
 [package]
 name = "async-watch"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["cynecx <me@cynecx.net>", "Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 description = "Async watch channel"

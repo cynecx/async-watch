@@ -1,3 +1,7 @@
+# Version 0.3.0
+
+- Renamed crate to async-watch.
+
 # Version 0.2.0
 
 Updated code & api according to the recent tokio's watch revisions (https://github.com/tokio-rs/tokio/pull/2814).
