@@ -156,7 +156,7 @@ struct Shared<T> {
 ///
 /// [`Sender`]: struct@Sender
 /// [`Receiver`]: struct@Receiver
-pub fn channel<T: Clone>(init: T) -> (Sender<T>, Receiver<T>) {
+pub fn channel<T>(init: T) -> (Sender<T>, Receiver<T>) {
     let shared = Arc::new(Shared {
         value: RwLock::new(init),
         version: AtomicUsize::new(VERSION_0),

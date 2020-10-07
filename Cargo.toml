@@ -1,6 +1,6 @@
 [package]
 name = "async-watch"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["cynecx <me@cynecx.net>", "Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 description = "Async watch channel"
@@ -13,7 +13,7 @@ keywords = ["async", "asynchronous", "channel", "synchronization"]
 categories = ["asynchronous", "concurrency"]
 
 [dependencies]
-event-listener = "2.4.0"
+event-listener = "2.5.1"
 
 [dev-dependencies]
 async-executor = "0.1.2"

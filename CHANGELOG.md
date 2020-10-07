@@ -1,3 +1,10 @@
+# Version 0.3.1
+
+## Changed
+
+- Remove `Clone` bound on channel construction (`async_watch::channel`).
+- Bump min. version of `event-listener` to v2.5.1, which fixes UB (catched by miri).
+
 # Version 0.3.0
 
 - Renamed crate to async-watch.
